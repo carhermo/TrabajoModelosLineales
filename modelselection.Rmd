@@ -1,0 +1,374 @@
+---
+output: 
+  pdf_document:
+    latex_engine: pdflatex
+title: "Selección de Modelos"
+thanks: ""
+author: "Carlos Hernani Morales"
+abstract: "Los modelos de regresión múltiple pueden presentar ciertas dificultades debidas a la presencia de más de una variable predictora. Al aumentar el número de predictores el modelo pierde explicabilidad, algunos predictores pueden estar correlacionados con otros, y por tanto aportan información redundante, y otros directamente pueden no aportar ninguna información relevante a la variable de interés de nuestro análisis. Para resolver estos problemas se plantean diversos modelos con diferentes predictores y compararemos para ver cuál de ellos es el mejor. Esto es lo que se conoce por Selección de Modelos. En el presente trabajo explicaré los diversos procedimientos aplicándolos sobre un banco de datos de la NBA."
+keywords: "Regresión Lineal Múltiple, Selección de Modelos, R"
+date: "20 de Diciembre, 2019"
+geometry: margin=1in
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r reset , echo=FALSE}
+rm(list=ls())
+```
+
+```{r myfunctions ,echo=FALSE,include=FALSE}
+source("./myfunctions.R")
+# model_selection <- function(vresp.test,vresp.train,trainset,testset,formula,nvmax=6,kfold=10,seed=1,method="exhaustive",criteria="indirect")
+```
+
+```{r importación ,echo=FALSE}
+library(tidyverse)
+NBA.train <- read.csv("./dataset/NBA_train.csv")
+NBA.test <- read.csv("./dataset/NBA_test.csv")
+library(skimr)
+library(knitr)
+library(leaps)
+```
+
+\newpage
+
+# Introducción
+
+El banco de datos _NBA_ presente en Kaggle contiene 835 observaciones con 20 columnas, donde nuestra variable respuesta de interés es __PTS__, los puntos marcados por un equipo en una temporada. Por tanto nuestro __objetivo__ es seleccionar el mejor modelo que prediga __PTS__.
+
+```{r,echo=FALSE,results='asis',fig.align='center', fig.cap='Tabla de variables y estadísticos'}
+sk <- skim(NBA.train) 
+sknames <- names(sk)[c(2,10,11,12,13,14)]
+sksel <- sk %>% select(sknames)
+names(sksel) <- c("Variable","Percentil 0","Percentil 25","Percentil 50","Percentil 75","Percentil 100")
+sksel <- sksel  %>% as_tibble() %>% kable(caption = "Tabla de variables y estadísticos.")
+sksel
+```
+
+El conocimiento previo del problema nos permite eliminar ciertas variables predictoras como:
+
+* __SeasonEnd,Playoffs,W,oppPTS__ que se corresponden con el año de cierre de temporada, si jugaron o no _playoffs_, el número de partidos que ganaron y los puntos que han recibido de oponentes. Está justificado descartar estas variables puesto que no existe relación causal entre estas y los puntos marcados.
+* __FG__ y __FGA__ son los _field goals_ y _field goals attempts_ que son la suma de los puntos dobles y triples, sin contar tiros libres. Si los tuviéramos en cuenta existirían problemas de colinealidad con las variables asociadas a dobles y triples.
+* Además como nuestro interés es predecir los puntos que marcarán un equipo nos interesa saberlo en función de los intentos o _attempts_, ya que estos incluyen los puntos marcados al rival.
+
+\newpage
+
+De modo que realizaremos el análisis sobre un conjunto inicial de variables que será: 
+
+```{r tabla variables iniciales, echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+tabl <- "  
+| Variables     | Descripción |
+|---------------|:-------------:|
+| PTS     | Variable respuesta |
+| X2PA   | Intentos tiro de campo 2 pts    |
+| X3PA   | Intentos tiro de campo 3 pts    |
+| FTA   | Intentos tiro libre    |
+| ORB   | Rebotes ofensivos    |
+| DRB   | Rebotes defensivos    |
+| AST   | Asistencias   |
+| STL   | Robos de balón   |
+| BLK  | Bloqueos   |
+| TOV  | Pérdida del balón     |
+"
+cat(tabl) # output the table in a format good for HTML/PDF/docx conversion
+```
+
+
+
+
+
+```{r,echo=FALSE,include=FALSE}
+y.test <- NBA.test$PTS
+y.train <- NBA.train$PTS
+
+```
+
+
+# Selección de modelos
+
+Para seleccionar el mejor modelo debemos definir primero lo que entendemos por _mejor_. En este caso es aquel modelo que generaliza mejor y esto lo consigueremos para aquel que tenga menor error en test.
+El cálculo de este error puede ser directo, utilizando otro conjunto de datos de validación o mediante _cross-validation_ o bien, de forma indirecta utilizando estimadores como el AIC,BIC, etc. que nos permiten comparar modelos con diferente dimensionalidad.
+
+El banco de datos que he usado ya tiene un conjunto de validación, así que podré comprobar todos los métodos de selección de modelos.
+
+Una vez definido el criterio de elección del mejor modelo hay que proponer los algoritmos que nos permitan explorar los diferentes modelos posibles. En el curso hemos visto:
+
+* _Best Subset o Mejor Modelo_: exploramos todas las combinaciones posibles de predictores, i.e. búsqueda exhaustiva.
+* _Selección por etapas_: exploramos un espacio de modelos más reducido, es más rápido pero no garantiza encontrar el _mejor_ modelo. Hay tres tipos:
+
+    - Hacia delante.
+    - Hacia atrás.
+    - Híbrido.
+
+Todos estos procedimientos se encuentran implementados en el comando _regsubsets_ de la librería _leaps_ de R.
+
+Mediante la ayuda de gráficas obtendremos el número de variables óptimo para cada método según los diferentes criterios que hemos mencionado con anterioridad.
+
+\newpage
+
+## Mejor Modelo:
+
+El algoritmo de Mejor Modelo, recorre todas las posibles combinaciones de predictores. Esta búsqueda exhaustiva puede llegar a ser costosa computacionalmente o imposible a partir de un número de predictores grande, p.ej.: 40 predictores, en nuestro caso solo tenemos 9 por lo que es asequible. \newline
+Para los modelos del mismo número de predictores se elige el que mejor valor de RSS o R$^2$ tiene y de entre estos se elige como el "mejor" modelo aquel que mejor valor de C$_p$ (AIC), BIC, R$^2$ ajustado, error de validación o de validación cruzada tenga.
+
+Para regresión múltiple C$_p$ y AIC son proporcionales.
+
+
+
+
+```{r full indirect,echo=FALSE,include=FALSE}
+
+full.indirect <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9 )
+
+```
+
+```{r full validation,echo=FALSE,include=FALSE}
+full.val <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9,crit="validation")
+
+```
+
+```{r full cv,echo=FALSE,include=FALSE}
+full.cv <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9,crit="crossval")
+```
+
+
+
+
+```{r,echo=FALSE}
+plot.full.ind <- full.indirect$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(title = "Comparación de BIC, Cp y R2-ajustado." ,y="Valor")+ theme(legend.position="none")
+
+plot.full.val <- full.val$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(y="Valor")+ theme(legend.position="none")
+
+plot.full.cv <- full.cv$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(y="Valor")+ theme(legend.position="none")
+```
+
+```{r,echo=FALSE,warning=FALSE,results='hide',message=FALSE, out.width='70%', fig.align='center', fig.cap='Algoritmo Mejor Modelo'}
+library(cowplot)
+plot_grid(plot.full.val,
+          plot.full.cv,
+          label_x = 0.2,
+          ncol = 2) -> new_p1
+
+plot_grid(plot.full.ind,
+          new_p1,
+          label_x = 0.2,
+          nrow = 2)
+```
+
+Como ya he mencionado las gráficas nos ayudan a encontrar el mejor número de variables para nuestro modelo, en este caso el método es el "Mejor Modelo" y lo que obtenemos es que el modelo que minimiza el error en la muestra de validación es aquel cuyo número de variables es 5.
+También se puede apreciar el _overfitting_ o sobreajuste en el RMSE de la muestra de entrenamiento.
+
+La búsqueda exhaustiva del mejor modelo nos proporciona el siguiente resultado: 
+
+```{r modelo full seleccionado,echo=FALSE}
+mfull <- regsubsets(PTS~X2PA + X3PA + FTA + AST + ORB + DRB + TOV + STL + BLK,data=NBA.train,nvmax=9)
+cfull <- as.data.frame(coef(mfull,5)) 
+names(cfull) <- c("Coeficientes")
+cfull %>% kable()
+```
+
+
+## Selección por etapas:
+
+En la selección por etapas recorremos un espacio reducido de los modelos de modo que en vez de calcular $2^p$ modelos, donde $p$ es el número de predictores, recorremos $1+p(p+1)/2$ que en nuestro caso sería pasar de 512 a 46 modelos.
+
+### Selección por etapas hacia delante.
+
+En este método se parte del modelo nulo y se van añadiendo variables sucesivamente.
+
+```{r forward indirect,echo=FALSE,include=FALSE}
+forward.indirect <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9,method="forward" )
+```
+
+```{r forward validation,echo=FALSE,include=FALSE}
+forward.val <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9,crit="validation",method="forward")
+```
+
+```{r forward cv,echo=FALSE,include=FALSE}
+forward.cv <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9,crit="crossval",method="forward")
+```
+
+
+```{r,echo=FALSE}
+plot.forward.ind <- forward.indirect$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(title = "Comparación de BIC, Cp y R2-ajustado." ,y="Valor")+ theme(legend.position="none")
+
+plot.forward.val <- forward.val$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(y="Valor")+ theme(legend.position="none")
+
+plot.forward.cv <- forward.cv$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(y="Valor")+ theme(legend.position="none")
+```
+
+```{r,echo=FALSE,warning=FALSE,results='hide',message=FALSE, out.width='70%', fig.align='center', fig.cap='Algoritmo Selección por etapas hacia delante.'}
+library(cowplot)
+plot_grid(plot.forward.val,
+          plot.forward.cv,
+          label_x = 0.2,
+          ncol = 2) -> new_p1
+
+plot_grid(plot.forward.ind,
+          new_p1,
+          label_x = 0.2,
+          nrow = 2)
+```
+
+Fijémonos ahora que no todos los criterios nos dan el mismo número de variables. El cálculo indirecto del error mediante C$_p$ (AIC), BIC, R$^2$ ajustado y el cálculo directo mediante validación cruzada  nos da un modelo de 6 variables igual que antes pero en el caso del error de validación nos da un modelo de 5 variables. Como el objetivo propuesto en Kaggle es mejorar el error en la muestra de validación nos quedamos con el modelo de 5 variables para el método de selección hacia delante.
+
+```{r modelo forward seleccionado,echo=FALSE,fig.pos='H',results='asis'}
+mforward <- regsubsets(PTS~X2PA + X3PA + FTA + AST + ORB + DRB + TOV + STL + BLK,data=NBA.train,nvmax=9,method = "forward")
+cforward <- as.data.frame(coef(mforward,5)) 
+names(cforward) <- c("Coeficientes")
+cforward %>% kable()
+```
+
+### Selección por etapas hacia atrás.
+
+Un requisito previo de la selección por etapas hacia atrás es que el número de observaciones sea mayor que el número de variables del modelo. Como estamos tratando 835 observaciones frente a 9 variables no hay ningún problema.
+
+En este método se procede a la inversa que en el anterior, partimos del modelo completo y vamos eliminando sucesivamente las variables que menos aporten información al modelo.
+
+```{r backward indirect,echo=FALSE,include=FALSE}
+backward.indirect <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9,method="backward" )
+```
+
+```{r backward validation,echo=FALSE,include=FALSE}
+backward.val <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9,crit="validation",method="backward")
+```
+
+```{r backward cv,echo=FALSE,include=FALSE}
+backward.cv <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9,crit="crossval",method="backward")
+```
+
+
+```{r,echo=FALSE}
+plot.backward.ind <- backward.indirect$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(title = "Comparación de BIC, Cp y R2-ajustado." ,y="Valor")+ theme(legend.position="none")
+
+plot.backward.val <- backward.val$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(y="Valor")+ theme(legend.position="none")
+
+plot.backward.cv <- backward.cv$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(y="Valor")+ theme(legend.position="none")
+```
+
+```{r,echo=FALSE,warning=FALSE,results='hide',message=FALSE, out.width='70%', fig.align='center', fig.cap='Algoritmo Selección por etapas hacia atrás.'}
+library(cowplot)
+plot_grid(plot.backward.val,
+          plot.backward.cv,
+          label_x = 0.2,
+          ncol = 2) -> new_p1
+
+plot_grid(plot.backward.ind,
+          new_p1,
+          label_x = 0.2,
+          nrow = 2)
+```
+
+Igual que en el anterior el modelo que mejor resultado da en la muestra de validación es el de 5 variables.
+
+```{r modelo backward seleccionado,echo=FALSE,fig.pos='H',results='asis'}
+mbackward <- regsubsets(PTS~X2PA + X3PA + FTA + AST + ORB + DRB + TOV + STL + BLK,data=NBA.train,nvmax=9,method = "backward")
+cbackward <- as.data.frame(coef(mbackward,5)) 
+names(cbackward) <- c("Coeficientes")
+cbackward %>% kable()
+```
+
+\newpage
+
+### Selección por etapas híbrida.
+
+Como el nombre indica, la selección por etapas híbrida es una combinación de los dos métodos anteriores de modo que se añaden variables y luego se desechan otras que no supongan una mejora del modelo. 
+
+```{r hibrido indirect,echo=FALSE,include=FALSE}
+seqrep.indirect <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9,method="seqrep" )
+```
+
+```{r hibrido validation,echo=FALSE,include=FALSE}
+seqrep.val <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9,crit="validation",method="seqrep")
+```
+
+```{r hibrido cv,echo=FALSE,include=FALSE}
+seqrep.cv <- model_selection(y.test,y.train,NBA.train,NBA.test,nvarmax=9,crit="crossval",method="seqrep")
+```
+
+```{r,echo=FALSE}
+plot.seqrep.ind <- seqrep.indirect$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(title = "Comparación de BIC, Cp y R2-ajustado." ,y="Valor")+ theme(legend.position="none")
+
+plot.seqrep.val <- seqrep.val$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(y="Valor")+ theme(legend.position="none")
+
+plot.seqrep.cv <- seqrep.cv$layers + facet_grid(rows = vars(Type),scales="free") + scale_x_discrete(name ="Dimensiones del modelo",limits=c("1","2","3","4","5","6","7","8","9")) +labs(y="Valor")+ theme(legend.position="none")
+```
+
+```{r,echo=FALSE,warning=FALSE,results='hide',message=FALSE, out.width='70%', fig.align='center', fig.cap='Algoritmo Selección por etapas híbrida.'}
+library(cowplot)
+plot_grid(plot.seqrep.val,
+          plot.seqrep.cv,
+          label_x = 0.2,
+          ncol = 2) -> new_p1
+
+plot_grid(plot.seqrep.ind,
+          new_p1,
+          label_x = 0.2,
+          nrow = 2)
+```
+
+Al igual que en los anteriores métodos de selección obtenemos el mismo resultado, un modelo de 5 variables.
+
+
+```{r modelo hibrido seleccionado,echo=FALSE,fig.pos='H',results='asis'}
+mhibrido <- regsubsets(PTS~X2PA + X3PA + FTA + AST + ORB + DRB + TOV + STL + BLK,data=NBA.train,nvmax=9,method = "seqrep")
+chibrido <- as.data.frame(coef(mhibrido,5)) 
+names(chibrido) <- c("Coeficientes")
+chibrido %>% kable()
+```
+
+\newpage
+
+## Comparación de métodos.
+
+Todos los métodos nos han proporcionado el mismo resultado si nos fijamos en el error de validación como criterio de selección, esto no tiene porque ser así en general, nuestro problema tiene muy pocas variables como para que haya demasiada disonancia entre los resultados proporcionados por los diferentes métodos, en casos de muchas más variables, aparecerían diferencias entre estos.
+
+El estadístico utilizado para el criterio de error de validación es el RMSE, una estimación de $\sigma$ del modelo:
+
+$$
+RMSE = \sqrt{\frac{RSS}{n-2}}
+$$
+
+La diferencia entre el RMSE de los modelos con 5 y 6 variables:
+$$
+RMSE_5 = 198 \quad RMSE_6 = 204
+$$
+Y la media de los puntos es 8370 por temporada y equipo, a unos 82 partidos por temporada y equipo equivale a unos 102 puntos por partido y un RMSE por partido de:
+$$
+RMSE_5 \approx 2  \quad RMSE_6 \approx 3
+$$
+Es decir que por cada partido nos vamos en la mayoría de casos tres veces esta cantidad, unos 6 o 9 puntos. 
+```{r comparación de modelos, echo=FALSE}
+modelo5 <- full.val$df.model[14,]
+modelo6 <- full.val$df.model[15,]
+mediaPTS <- mean(NBA.train$PTS)
+```
+
+
+# Conclusiones
+
+Concluimos por tanto que el modelo que mejor explica nuestros datos es una regresión lineal múltiple con 5 variables:
+
+$$
+PTS \sim X2PA + X3PA + FTA + AST + ORB 
+$$
+Con los siguientes coeficientes asociados:
+```{r modelo conclusion,echo=FALSE,fig.pos='H',results='asis'}
+mhibrido <- regsubsets(PTS~X2PA + X3PA + FTA + AST + ORB + DRB + TOV + STL + BLK,data=NBA.train,nvmax=9,method = "seqrep")
+chibrido <- as.data.frame(coef(mhibrido,5)) 
+names(chibrido) <- c("Coeficientes")
+chibrido %>% kable()
+```
+
+Y que nos proporciona un RMSE en el conjunto de validación de: 198
+
+
+
+\newpage
+# Anexo: Código utilizado
+
+Repositorio de GitHub: 
