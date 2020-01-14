@@ -1,0 +1,206 @@
+---
+output: 
+  pdf_document:
+    latex_engine: pdflatex
+title: "Regularización"
+thanks: ""
+author: "Carlos Hernani Morales"
+abstract: "La presencia del sobreaprendizaje en los modelos de aprendizaje automático reducen drásticamente la generalización y aplicabilidad de estos sobre datos nuevos, lo que los hace prácticamente inútiles para predecir y estimar en entornos reales donde nuevos datos aparecen constantemente. La regularización es una forma de evitar este sobreaprendizaje y así poder tener modelos que generalizen mejor. En el presente trabajo explicaré los diversos procedimientos aplicándolos sobre un banco de datos de la NBA."
+keywords: "Regresión Lineal Múltiple, Regularización, Selección de Modelos, R"
+date: "20 de Diciembre, 2019"
+geometry: margin=1in
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r reset , echo=FALSE}
+rm(list=ls())
+```
+
+```{r myfunctions ,echo=FALSE,include=FALSE}
+source("./myfunctions.R")
+# model_selection <- function(vresp.test,vresp.train,trainset,testset,formula,nvmax=6,kfold=10,seed=1,method="exhaustive",criteria="indirect")
+```
+
+```{r importación ,echo=FALSE}
+library(tidyverse)
+NBA.train <- read.csv("./dataset/NBA_train.csv")
+NBA.test <- read.csv("./dataset/NBA_test.csv")
+library(skimr)
+library(knitr)
+library(leaps)
+```
+
+\newpage
+
+# Introducción
+
+El banco de datos _NBA_ presente en Kaggle contiene 835 observaciones con 20 columnas, donde nuestra variable respuesta de interés es __PTS__, los puntos marcados por un equipo en una temporada.
+
+```{r,echo=FALSE,results='asis',fig.align='center', fig.cap='Tabla de variables y estadísticos'}
+sk <- skim(NBA.train) 
+sknames <- names(sk)[c(2,10,11,12,13,14)]
+sksel <- sk %>% select(sknames)
+names(sksel) <- c("Variable","Percentil 0","Percentil 25","Percentil 50","Percentil 75","Percentil 100")
+sksel <- sksel  %>% as_tibble() %>% kable(caption = "Tabla de variables y estadísticos.")
+sksel
+```
+
+ Hay que tener en cuenta ciertas consideraciones sobre el problema para evitar problemas a la hora de aplicar nuestro modelo de regresión lineal. En esta tarea nos ayuda enormemente el conocimiento previo del problema que nos permite eliminar ciertas variables predictoras como:
+ 
+* __SeasonEnd,Playoffs,W,oppPTS__ que se corresponden con el año de cierre de temporada, si jugaron o no _playoffs_, el número de partidos que ganaron y los puntos que han recibido de oponentes. Está justificado descartar estas variables puesto que no existe relación causal entre estas y los puntos marcados.
+* __FG__ y __FGA__ son los _field goals_ y _field goals attempts_ que son la suma de los puntos dobles y triples, sin contar tiros libres. Si los tuviéramos en cuenta existirían problemas de colinealidad con las variables asociadas a dobles y triples.
+* Además como nuestro interés es predecir los puntos que marcarán un equipo nos interesa saberlo en función de los intentos o _attempts_, ya que estos incluyen los puntos marcados al rival.
+
+\newpage
+
+De modo que realizaremos el análisis sobre un conjunto inicial de variables que será: 
+
+```{r tabla variables iniciales, echo=FALSE, message=FALSE, warnings=FALSE, results='asis'}
+tabl <- "  
+| Variables     | Descripción |
+|---------------|:-------------:|
+| PTS     | Variable respuesta |
+| X2PA   | Intentos tiro de campo 2 pts    |
+| X3PA   | Intentos tiro de campo 3 pts    |
+| FTA   | Intentos tiro libre    |
+| ORB   | Rebotes ofensivos    |
+| DRB   | Rebotes defensivos    |
+| AST   | Asistencias   |
+| STL   | Robos de balón   |
+| BLK  | Bloqueos   |
+| TOV  | Pérdida del balón     |
+"
+cat(tabl) # output the table in a format good for HTML/PDF/docx conversion
+```
+
+
+
+
+
+```{r,echo=FALSE,include=FALSE}
+y.test <- NBA.test$PTS
+y.train <- NBA.train$PTS
+x.test <- model.matrix(PTS~X2PA + X3PA + FTA + AST + ORB + DRB + TOV + STL + BLK,NBA.test)[,-1]
+x.train <- model.matrix(PTS~X2PA + X3PA + FTA + AST + ORB + DRB + TOV + STL + BLK,NBA.train)[,-1]
+```
+
+
+
+# Regularización
+
+Los modelos de autoaprendizaje, y en este caso concreto, de regresiónl lineal sufren en ocasiones de un fenómeno llamado sobreajuste o _overfitting_.
+Al ir añadiendo variables predictoras, i.e. aumentando la complejidad, nos acercamos al modelo óptimo pero pero puede ser que nos pasemos de complejidad y el modelo de autoaprendizaje aprenda todas las características de nuestra muestra haciendo que al comparar el resultado con una muestra de validación no sea capaz de generalizar correctamente. A esto se le conoce como el dilema sesgo/varianza ilustrado en la siguiente imagen.
+
+![Dilema Sesgo/Varianza](./bvtrade.png)
+
+Los modelos de regresión lineal utilizan el método de mínimos cuadrados para calcular el error entre los valores reales y estimados. El objetivo es minimizar el RSS. que es la suma de los residuos al cuadrado. Para evitar el _overfitting_ podemos penalizar los modelos haciendo que los coeficientes se acerquen a cero y por tanto reduciendo la varianza de los coeficientes estimados. Esto es lo que se conoce como __regularización__.
+
+Si tenemos un modelo de regresión $Y=\beta_0 +\beta_1 X_1 + ... + \beta_p X_p + \epsilon$ existen dos tipos de penalización que se pueden incluir en el RSS, es decir dos tipos de regularización:
+
+* Regresión Ridge (L2): $\lambda \sum_{j=1}^{p} \beta_j^2$
+
+* Regresión Lasso (L1): $\lambda \sum_{j=1}^{p} |\beta_j|$
+
+Donde $\lambda$ es el factor de penalización, para encontrar el factor óptimo plantearemos un grid de modelos con diferentes valores y eligiremos el mejor.
+
+Ambas opciones están implementadas en R en la librería _glmnet_.
+
+## Aplicación de Regresión Ridge
+
+```{r ridge-regression,echo=FALSE,include=FALSE}
+#install.packages("glmnet")
+library(glmnet)
+grid <- 10^seq(10,-2,length.out = 100)
+ridge.mod <- glmnet(x.train,y.train,alpha=0,lambda=grid)
+dim(coef(ridge.mod))
+info.mod <- function(modelo,indgrid,n){
+  l <- modelo$lambda[indgrid]
+  c <- coef(modelo)[,indgrid]
+  t <- sqrt(sum(coef(modelo)[-1,indgrid]^n))
+  return(c(lambda=l,c,Penalizacion=t))
+}
+info.mod(ridge.mod,80,2)
+
+rss.test <- function(modelo,xtesting,ytesting){
+  l <- modelo$lambda
+  ridge.predi <- predict(modelo,s=l,newx=xtesting)
+  rss <- c()
+  for(i in 1:dim(ridge.predi)[2]){
+    rss[i] <- mean((ridge.predi[,i]-ytesting)^2)
+  }
+  return(rss)
+}
+r <- rss.test(ridge.mod,x.test,y.test)
+l <- ridge.mod$lambda
+l.min <- l[which.min(r)]
+c.min.ridge <- as.data.frame(as.matrix(coef(glmnet(x.train,y.train,alpha=0,lambda=l[which.min(r)]))))
+names(c.min.ridge) <- c("Coeficientes")
+
+```
+
+```{r,echo=FALSE}
+plot(log(l),r,type = "l",xlab="log(lambda)",ylab="RSS",main="Regresión Ridge")
+points(log(ridge.mod$lambda[which.min(r)]),r[which.min(r)],col="red",pch="*",cex=2)
+```
+
+El valor obtenido para $\lambda$ es 0,01747528 y sus coeficientes asociados son:
+```{r,echo=FALSE}
+c.min.ridge %>% kable()
+```
+
+## Aplicación de Regresión Lasso
+
+```{r lasso-regression,echo=FALSE,include=FALSE}
+
+lasso.mod <- glmnet(x.train,y.train,alpha=1,lambda=grid)
+
+
+info.mod(lasso.mod,80,2)
+
+
+r <- rss.test(lasso.mod,x.test,y.test)
+l <- lasso.mod$lambda
+l.min <- l[which.min(r)]
+lasso.min <- glmnet(x.train,y.train,alpha = 1,lambda=l.min)
+c.min.lasso <- as.data.frame(as.matrix(coef(lasso.min)))
+names(c.min.lasso) <- c("Coeficientes")
+```
+
+```{r,echo=FALSE}
+plot(log(l),r,type = "l",xlab="log(lambda)",ylab="RSS",main="Regresión Lasso")
+points(log(lasso.mod$lambda[which.min(r)]),r[which.min(r)],col="red",pch="*",cex=2)
+```
+
+El valor obtenido para $\lambda$ es 0,2154435 y sus coeficientes asociados son:
+
+```{r,echo=FALSE}
+c.min.lasso %>% kable()
+```
+
+\newpage
+
+## Comparación de métodos.
+
+En general la regresión Ridge tiene un grave problema y es que mantiene todas las variables predictoras lo que puede ser un reto para modelos de muchas variables mientras que la regresión Lasso es capaz de dar valor nulo a ciertos coeficientes haciendo el modelo más explicable y sencillo de calcular.
+
+En este caso concreto, ambos modelos no muestran resultados diferentes debido a que tenemos pocas variables y el método Lasso no ha eliminado variables.
+
+
+
+# Conclusiones
+
+Si se nos plantea una situación donde el sobreajuste aparece, los métodos Ridge y Lasso son capaces de evitar esto penalizando el modelo. Esto se extiende al resto de modelos de autoaprendizaje como por ejemplo en redes neuronales donde además existe el método _dropout_ que de forma aleatoria desconecta nodos de la red. Esto dificulta al modelo sobreaprender el ruido presenta en la muestra de entrenamiento.
+
+Como ya he mencionado, con tan pocas variables ambos métodos han proporcionado resultados parecidos entre ellos.
+
+\newpage
+
+# Anexo: Código utilizado
+
+Dataset: https://www.kaggle.com/amanajmera1/national-basketball-associationnba-dataset
+\newline
+Repositorio de GitHub: https://github.com/carhermo/TrabajoModelosLineales
